@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import '../models/app_models.dart';
+import '../../models/app_models.dart';
 
 class SpatialMath {
   SpatialMath._();
