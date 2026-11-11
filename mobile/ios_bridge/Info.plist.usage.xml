@@ -1,0 +1,9 @@
+<!-- Info.plist Privacy Usage Descriptions for Spatial 3D Home (iOS 16+/17+) -->
+<key>NSCameraUsageDescription</key>
+<string>Digunakan untuk pemindaian ruangan 3D LiDAR (Apple RoomPlan) dan foto aset inventaris 100% on-device tanpa upload video mentah.</string>
+<key>NSFaceIDUsageDescription</key>
+<string>Digunakan untuk membuka kunci brankas data aset terenkripsi AES-256 lokal.</string>
+<key>NSPhotoLibraryUsageDescription</key>
+<string>Digunakan untuk memilih foto struk pembelian atau bukti aset secara lokal.</string>
+<key>NSMotionUsageDescription</key>
+<string>Digunakan untuk pelacakan orientasi ARKit / RoomPlan selama pemetaan dimensi ruangan 3D.</string>

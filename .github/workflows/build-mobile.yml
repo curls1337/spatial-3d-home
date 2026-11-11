@@ -1,0 +1,274 @@
+name: Build Mobile App (iOS IPA & Android APK)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - 'mobile/**'
+      - 'pubspec.yaml'
+      - 'lib/**'
+      - '.github/workflows/build-mobile.yml'
+  workflow_dispatch:
+    inputs:
+      app_env:
+        description: 'Target environment (demo | staging | production)'
+        required: true
+        default: 'demo'
+        type: choice
+        options:
+          - demo
+          - staging
+          - production
+
+permissions:
+  contents: write
+
+env:
+  APP_DISPLAY_NAME: "Spatial 3D Home"
+  APP_ORG_ID: "com.spatial3dhome"
+  PROJECT_NAME: "spatial_3d_home"
+  IPA_FILENAME: "Spatial3DHome-v1.ipa"
+  APK_FILENAME: "Spatial3DHome-v1.apk"
+
+jobs:
+  validate-env-and-schema:
+    name: Validate Config & Security Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Verify No Hardcoded Secrets & .env.example Exists
+        run: |
+          test -f .env.example
+          test -f mobile/pubspec.yaml
+          test -f mobile/lib/main.dart
+          test -f database/schema_local_sqlite.sql
+          if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 :memory: < database/schema_local_sqlite.sql
+            echo "SQLite local schema validated."
+          fi
+          if grep -rnE "BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{16,}" . --exclude-dir=.git --exclude-dir=.github --exclude="*.md"; then
+            echo "ERROR: Potential hardcoded secret detected!"
+            exit 1
+          fi
+          echo "Security hygiene check passed."
+
+  build-android:
+    name: Build Android Release APK (Flutter)
+    needs: validate-env-and-schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Prepare Flutter Workspace & Native Shell
+        run: |
+          SRC_DIR="."
+          if [ -d "mobile/lib" ] && [ -f "mobile/pubspec.yaml" ]; then
+            SRC_DIR="mobile"
+          fi
+          mkdir -p /tmp/custom_src
+          cp -r "$SRC_DIR/lib" /tmp/custom_src/
+          cp "$SRC_DIR/pubspec.yaml" /tmp/custom_src/
+          if [ -d "$SRC_DIR/test" ]; then cp -r "$SRC_DIR/test" /tmp/custom_src/; fi
+          if [ -d "$SRC_DIR/assets" ]; then cp -r "$SRC_DIR/assets" /tmp/custom_src/; fi
+
+          flutter create --platforms=android,ios --org "${{ env.APP_ORG_ID }}" --project-name "${{ env.PROJECT_NAME }}" .
+          rm -rf lib/*
+          cp -r /tmp/custom_src/lib/* lib/
+          cp /tmp/custom_src/pubspec.yaml pubspec.yaml
+          if [ -d /tmp/custom_src/test ]; then
+            mkdir -p test
+            rm -rf test/*
+            cp -r /tmp/custom_src/test/* test/
+          fi
+          if [ -d /tmp/custom_src/assets ]; then
+            mkdir -p assets
+            cp -r /tmp/custom_src/assets/* assets/
+          fi
+
+          # Overlay custom Android Kotlin ARCore/Biometric/Keystore bridge if present
+          if [ -d "mobile/android_bridge" ]; then
+            cp -r mobile/android_bridge/* android/app/src/main/ || true
+          fi
+
+          # Inject required Android permissions if missing
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
+              sed -i '/<manifest/a \    <uses-permission android:name="android.permission.CAMERA" />' "$MANIFEST"
+            fi
+            if ! grep -q "android.permission.USE_BIOMETRIC" "$MANIFEST"; then
+              sed -i '/<manifest/a \    <uses-permission android:name="android.permission.USE_BIOMETRIC" />' "$MANIFEST"
+            fi
+          fi
+
+          sed -i 's/android:label="[a-z0-9_]*"/android:label="Spatial 3D Home"/' android/app/src/main/AndroidManifest.xml || true
+          flutter pub get
+
+      - name: Analyze & Run Unit Tests
+        run: |
+          flutter analyze --no-fatal-infos
+          if [ -d "test" ]; then flutter test; fi
+
+      - name: Build Release APK
+        env:
+          APP_ENV: ${{ inputs.app_env || 'demo' }}
+        run: |
+          DEMO_FLAG="true"
+          if [ "$APP_ENV" = "production" ]; then
+            DEMO_FLAG="false"
+          fi
+          flutter build apk --release \
+            --dart-define=APP_ENV="$APP_ENV" \
+            --dart-define=ENABLE_DEMO_ROLE_SWITCHER="$DEMO_FLAG" \
+            --dart-define=LIDAR_FALLBACK_SIMULATION=true
+          cp build/app/outputs/flutter-apk/app-release.apk "./${{ env.APK_FILENAME }}"
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-APK
+          path: ./${{ env.APK_FILENAME }}
+
+  build-ios:
+    name: Build iOS Sideload IPA (Flutter + RoomPlan Bridge)
+    needs: validate-env-and-schema
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Prepare Flutter Workspace & Native iOS Shell
+        run: |
+          SRC_DIR="."
+          if [ -d "mobile/lib" ] && [ -f "mobile/pubspec.yaml" ]; then
+            SRC_DIR="mobile"
+          fi
+          mkdir -p /tmp/custom_src
+          cp -r "$SRC_DIR/lib" /tmp/custom_src/
+          cp "$SRC_DIR/pubspec.yaml" /tmp/custom_src/
+          if [ -d "$SRC_DIR/test" ]; then cp -r "$SRC_DIR/test" /tmp/custom_src/; fi
+          if [ -d "$SRC_DIR/assets" ]; then cp -r "$SRC_DIR/assets" /tmp/custom_src/; fi
+
+          flutter create --platforms=android,ios --org "${{ env.APP_ORG_ID }}" --project-name "${{ env.PROJECT_NAME }}" .
+          rm -rf lib/*
+          cp -r /tmp/custom_src/lib/* lib/
+          cp /tmp/custom_src/pubspec.yaml pubspec.yaml
+          if [ -d /tmp/custom_src/test ]; then
+            mkdir -p test
+            rm -rf test/*
+            cp -r /tmp/custom_src/test/* test/
+          fi
+          if [ -d /tmp/custom_src/assets ]; then
+            mkdir -p assets
+            cp -r /tmp/custom_src/assets/* assets/
+          fi
+
+          # Overlay custom iOS Swift RoomPlan/ARKit/Vision bridge (AppDelegate.swift only to avoid orphan files in Runner.xcodeproj)
+          if [ -f "mobile/ios_bridge/AppDelegate.swift" ]; then
+            cp mobile/ios_bridge/AppDelegate.swift ios/Runner/AppDelegate.swift
+          fi
+
+          sed -i '' 's/<string>$(PRODUCT_NAME)<\/string>/<string>Spatial 3D Home<\/string>/g' ios/Runner/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 'Spatial 3D Home'" ios/Runner/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'Spatial 3D Home'" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'Digunakan untuk pemindaian ruangan 3D LiDAR (Apple RoomPlan) dan foto aset inventaris secara on-device.'" ios/Runner/Info.plist || /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Digunakan untuk pemindaian ruangan 3D LiDAR (Apple RoomPlan) dan foto aset inventaris secara on-device.'" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :NSFaceIDUsageDescription 'Digunakan untuk membuka kunci brankas data aset terenkripsi AES-256 lokal.'" ios/Runner/Info.plist || /usr/libexec/PlistBuddy -c "Add :NSFaceIDUsageDescription string 'Digunakan untuk membuka kunci brankas data aset terenkripsi AES-256 lokal.'" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'Digunakan untuk memilih foto struk pembelian atau bukti aset secara lokal.'" ios/Runner/Info.plist || /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'Digunakan untuk memilih foto struk pembelian atau bukti aset secara lokal.'" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :NSMotionUsageDescription 'Digunakan untuk pelacakan orientasi ARKit / RoomPlan selama pemetaan 3D.'" ios/Runner/Info.plist || /usr/libexec/PlistBuddy -c "Add :NSMotionUsageDescription string 'Digunakan untuk pelacakan orientasi ARKit / RoomPlan selama pemetaan 3D.'" ios/Runner/Info.plist
+          flutter pub get
+
+      - name: Build Unsigned iOS App via xcodebuild
+        env:
+          APP_ENV: ${{ inputs.app_env || 'demo' }}
+        run: |
+          DEMO_FLAG="true"
+          if [ "$APP_ENV" = "production" ]; then
+            DEMO_FLAG="false"
+          fi
+          flutter build ios --config-only --no-codesign \
+            --dart-define=APP_ENV="$APP_ENV" \
+            --dart-define=ENABLE_DEMO_ROLE_SWITCHER="$DEMO_FLAG" \
+            --dart-define=LIDAR_FALLBACK_SIMULATION=true
+          cd ios
+          xcodebuild build \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+          cd ..
+          mkdir -p Payload
+          cp -r ios/build/Build/Products/Release-iphoneos/Runner.app Payload/
+          zip -r "./${{ env.IPA_FILENAME }}" Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-IPA
+          path: ./${{ env.IPA_FILENAME }}
+
+  publish-release:
+    name: Publish IPA & APK to GitHub Releases
+    needs: [build-android, build-ios]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Android-APK
+          path: ./release-files
+
+      - name: Download IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: iOS-IPA
+          path: ./release-files
+
+      - name: Generate Checksums
+        run: |
+          cd release-files
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Spatial 3D Home v1.0.${{ github.run_number }} (iOS .ipa & Android .apk)"
+          body: |
+            ## Paket Instalasi Mobile — Spatial 3D Home
+            - 📱 **`${{ env.IPA_FILENAME }}`**: iOS Sideload (AltStore, Sideloadly, ESign, GBox). *Catatan: hapus versi lama sebelum menginstal versi baru agar container & signature cache tidak bentrok.*
+            - 🤖 **`${{ env.APK_FILENAME }}`**: Android Direct Install (Android 10+ dengan ARCore fallback).
+            - 🔒 **`SHA256SUMS.txt`**: Checksum verifikasi integritas paket build.
+          draft: false
+          prerelease: false
+          files: |
+            ./release-files/${{ env.IPA_FILENAME }}
+            ./release-files/${{ env.APK_FILENAME }}
+            ./release-files/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Spatial 3D Home — Interactive iOS LiDAR &amp; Asset Vault Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js" integrity="sha384-qOkzR5Ke/XkQxuGVJ9hpFEpDlcoLtWwVYhnJf06cLIZa2vaIptSqaubivErzmD5O" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg-outer: #050811;
+      --bg-phone: #090D16;
+      --card-bg: #111827;
+      --text-main: #F8FAFC;
+    }
+    body.theme-light {
+      --bg-outer: #E2E8F0;
+      --bg-phone: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text-main: #0F172A;
+    }
+    body {
+      background-color: var(--bg-outer);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Plus Jakarta Sans", system-ui, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    .device-frame {
+      transition: all 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+      position: relative;
+      background: var(--bg-phone);
+      box-shadow: 0 30px 90px -15px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.12);
+    }
+    .iphone-frame {
+      width: 390px;
+      height: 820px;
+      border-radius: 52px;
+      border: 11px solid #1E293B;
+    }
+    .android-frame {
+      width: 396px;
+      height: 820px;
+      border-radius: 34px;
+      border: 9px solid #1E293B;
+    }
+    .dynamic-island {
+      width: 118px;
+      height: 32px;
+      background: #000000;
+      border-radius: 999px;
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 10px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+    }
+    .android-frame .dynamic-island {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      top: 12px;
+      padding: 0;
+    }
+    .android-frame .dynamic-island .di-dot {
+      display: none;
+    }
+    .theme-light .bento-card,
+    .theme-light #phone-screen-content .bg-slate-900\/80,
+    .theme-light #phone-screen-content .bg-slate-900\/60,
+    .theme-light #phone-screen-content .bg-slate-900 {
+      background-color: #FFFFFF !important;
+      color: #0F172A !important;
+      border-color: #CBD5E1 !important;
+    }
+    .theme-light #phone-screen-content .bg-slate-950,
+    .theme-light #phone-screen-content .bg-slate-950\/70 {
+      background-color: #F1F5F9 !important;
+      color: #0F172A !important;
+      border-color: #CBD5E1 !important;
+    }
+    .theme-light #phone-screen-content h2,
+    .theme-light #phone-screen-content h3,
+    .theme-light #phone-screen-content .text-white {
+      color: #0F172A !important;
+    }
+    .theme-light #phone-screen-content .text-slate-300,
+    .theme-light #phone-screen-content .text-slate-400 {
+      color: #475569 !important;
+    }
+    .theme-light #phone-screen-content input,
+    .theme-light #phone-screen-content select,
+    .theme-light #phone-screen-content textarea {
+      color: #0F172A !important;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="theme-dark flex flex-col items-center justify-start py-4 px-3 gap-4">
+
+  <!-- Toast Notification -->
+  <div id="simulator-toast" class="opacity-0 pointer-events-none"></div>
+
+  <!-- Top Controls Strip (Outside Device Frame) -->
+  <header class="w-full max-w-5xl rounded-2xl bg-slate-900/85 border border-white/10 backdrop-blur-md px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center text-slate-950 font-black text-base shadow-lg">3D</div>
+      <div>
+        <h1 class="text-sm font-black text-white leading-tight">Spatial 3D Home &amp; Asset Vault</h1>
+        <p class="text-[11px] text-slate-400">Interactive Mobile Simulator • Mode 4 Flutter (iOS <code class="text-cyan-300">.ipa</code> &amp; Android <code class="text-emerald-300">.apk</code>)</p>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2 text-xs">
+      <!-- Quick Role Switcher -->
+      <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/10">
+        <span class="text-[10px] text-slate-400 px-1.5 font-mono">Role:</span>
+        <button onclick="app.setRole('owner')" class="px-2.5 py-1 rounded-lg font-bold bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition cursor-pointer">👑 Owner</button>
+        <button onclick="app.setRole('inspector')" class="px-2.5 py-1 rounded-lg font-bold bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition cursor-pointer">🛡️ Surveyor</button>
+        <button onclick="app.setRole('tenant')" class="px-2.5 py-1 rounded-lg font-bold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition cursor-pointer">🏠 Tenant</button>
+      </div>
+
+      <!-- Device & Theme Controls -->
+      <div class="flex items-center gap-1.5">
+        <button onclick="app.setDevice('iphone')" data-dev="iphone" class="btn-device-switch active px-2.5 py-1.5 rounded-xl bg-white/10 text-white font-semibold cursor-pointer">📱 iPhone 15</button>
+        <button onclick="app.setDevice('android')" data-dev="android" class="btn-device-switch px-2.5 py-1.5 rounded-xl bg-white/5 text-slate-300 hover:bg-white/10 font-semibold cursor-pointer">🤖 Android</button>
+        <button onclick="app.setTheme(app.theme === 'dark' ? 'light' : 'dark')" class="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-amber-300 font-semibold cursor-pointer">🌓 Tema</button>
+        <button id="btn-auth-toggle" onclick="app.isAuthenticated ? app.logout() : app.triggerBiometricLogin()" class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-semibold cursor-pointer">🔓 Logout</button>
+        <button onclick="app.resetDemoData()" class="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-semibold cursor-pointer">↺ Reset</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace: Phone Frame + Side Guide -->
+  <main class="w-full max-w-5xl flex flex-col lg:flex-row items-center lg:items-start justify-center gap-6 pb-8">
+
+    <!-- Phone Device Simulator -->
+    <div id="device-frame-container" class="device-frame iphone-frame overflow-hidden flex flex-col shrink-0">
+      <!-- Dynamic Island / Punch Hole -->
+      <div class="dynamic-island">
+        <div class="di-dot w-2.5 h-2.5 rounded-full bg-indigo-950 border border-indigo-400/30"></div>
+      </div>
+
+      <!-- iOS / Android Top Status Bar + App Header -->
+      <div id="phone-top-header" class="pt-11 px-4 pb-2.5 border-b border-white/10 flex items-center justify-between bg-slate-950/50 backdrop-blur-md z-20">
+        <div>
+          <div class="text-[10px] font-mono text-cyan-400 font-bold tracking-wider">SPATIAL 3D VAULT</div>
+          <div class="text-xs font-black text-white">Villa Kemang #14B</div>
+        </div>
+        <span id="app-role-pill" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-indigo-500/20 text-indigo-300 border-indigo-500/40">👑 Owner</span>
+      </div>
+
+      <!-- Scrollable App Screen Content -->
+      <div id="phone-screen-content" class="flex-1 overflow-y-auto px-3.5 pt-3 no-scrollbar relative"></div>
+
+      <!-- Modal Bottom Sheet (Add / Edit Asset) -->
+      <div id="modal-asset-sheet" class="hidden absolute inset-0 bg-black/75 backdrop-blur-sm z-40 flex items-end justify-center">
+        <div class="w-full bg-slate-900 border-t border-white/15 rounded-t-3xl p-4 space-y-3 max-h-[85%] overflow-y-auto">
+          <div class="w-10 h-1 bg-slate-700 rounded-full mx-auto mb-1"></div>
+          <div class="flex items-center justify-between">
+            <h3 id="modal-asset-title" class="text-sm font-black text-white">Tambah Aset Spasial Baru</h3>
+            <button onclick="app.closeModal()" class="text-slate-400 hover:text-white text-sm font-bold px-2">✕</button>
+          </div>
+
+          <div class="space-y-2.5 text-xs">
+            <div>
+              <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Nama Aset *</label>
+              <input id="form-asset-name" type="text" placeholder="Contoh: Apple Studio Display 27" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-white focus:border-cyan-400 focus:outline-none" />
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Ruangan 3D</label>
+                <select id="form-asset-room" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-white focus:outline-none">
+                  <option value="room-living">Living Room</option>
+                  <option value="room-studio">Home Studio</option>
+                  <option value="room-bedroom">Master Bedroom</option>
+                  <option value="room-kitchen">Modern Kitchen</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Kategori</label>
+                <select id="form-asset-category" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-white focus:outline-none">
+                  <option value="electronics">Elektronik</option>
+                  <option value="furniture">Furnitur</option>
+                  <option value="appliances">Peralatan</option>
+                  <option value="collectibles">Koleksi Mewah</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Harga Beli (IDR)</label>
+                <input id="form-asset-price" type="number" placeholder="25000000" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-white focus:outline-none" />
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Nomor Seri (S/N)</label>
+                <input id="form-asset-serial" type="text" placeholder="SN-2026-XYZ" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-white focus:outline-none" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Kondisi</label>
+                <select id="form-asset-grade" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-white">
+                  <option value="Mint">Mint (Baru)</option>
+                  <option value="Good">Good (Baik)</option>
+                  <option value="Fair">Fair (Layak)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Visibilitas RBAC</label>
+                <select id="form-asset-visibility" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-white">
+                  <option value="allAuthorized">Semua Role</option>
+                  <option value="insuranceOnly">Owner &amp; Asuransi</option>
+                  <option value="ownerPrivate">Khusus Owner (Privat)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 mb-1 text-[10px] font-bold uppercase">Catatan Inspeksi</label>
+              <textarea id="form-asset-note" rows="2" placeholder="Catatan garansi atau kondisi fisik..." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-white focus:outline-none"></textarea>
+            </div>
+
+            <button onclick="app.saveAssetFromForm()" class="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs shadow-lg shadow-cyan-500/20">
+              💾 Simpan ke Brankas 3D
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating Glass Bottom Tab Bar + Home Indicator -->
+      <div id="phone-bottom-nav-wrapper" class="bg-slate-950/90 backdrop-blur-xl border-t border-white/10 px-2 pt-1.5 pb-4 z-20">
+        <nav id="phone-bottom-nav" class="flex items-center justify-around"></nav>
+        <div class="w-32 h-1 bg-white/30 rounded-full mx-auto mt-2"></div>
+      </div>
+    </div>
+
+    <!-- Side Information & Build Card -->
+    <aside class="w-full lg:w-80 space-y-4 text-xs">
+      <div class="rounded-2xl bg-slate-900/85 border border-white/10 p-4 space-y-3">
+        <div class="flex items-center gap-2 text-sm font-bold text-white">
+          <span>📱</span><span>Panduan Uji Simulator</span>
+        </div>
+        <ul class="space-y-2 text-slate-300 leading-relaxed text-[11px]">
+          <li>• <b>Putar Ruang 3D:</b> Geser / drag kanvas LiDAR Mesh di layar Home 3D.</li>
+          <li>• <b>Uji RBAC 1-Klik:</b> Ganti ke <b>🏠 Tenant</b> di atas untuk melihat angka valuasi otomatis disamarkan (<i>Financial Masking</i>) &amp; aset privat tersembunyi.</li>
+          <li>• <b>Surveyor B2B:</b> Ganti ke <b>🛡️ Surveyor</b> lalu buka tab Inventaris untuk menverifikasi nilai taksir aset.</li>
+          <li>• <b>CRUD Persisten:</b> Tambah/Edit aset tersimpan otomatis di <code>localStorage</code>.</li>
+        </ul>
+      </div>
+
+      <div class="rounded-2xl bg-gradient-to-br from-slate-900 to-indigo-950/40 border border-indigo-500/30 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-white text-sm">🚀 Native Build Pipeline</span>
+          <span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">CI/CD Ready</span>
+        </div>
+        <p class="text-[11px] text-slate-300 leading-relaxed">
+          Source code Flutter lengkap (<code>mobile/lib/</code>), native bridge <b>Apple RoomPlan LiDAR</b> (<code>AppDelegate.swift</code>), &amp; workflow GitHub Actions (<code>.github/workflows/build-mobile.yml</code>) siap di-compile menjadi file instalasi nyata:
+        </p>
+        <div class="grid grid-cols-2 gap-2 text-center font-mono text-[11px]">
+          <div class="p-2 rounded-xl bg-slate-950/70 border border-white/10 text-cyan-300">Spatial3DHome-v1.ipa</div>
+          <div class="p-2 rounded-xl bg-slate-950/70 border border-white/10 text-emerald-300">Spatial3DHome-v1.apk</div>
+        </div>
+        <div class="text-[10px] text-slate-400">
+          * Instalasi iOS tanpa App Store: gunakan <b>GBox / ESign / AltStore / Sideloadly</b>.
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <script src="simulator_3d.js"></script>
+  <script src="simulator_app.js"></script>
+</body>
+</html>
